@@ -66,3 +66,44 @@ Para entender una regla de descuento hay que leer, en el medio, consultas SQL y 
 - Probar de nuevo el método entero, porque no existe forma de probar solo la regla de descuento. Esa es la violación de OCP: el método se modifica en vez de extenderse.
 
 **Conclusión del diagnóstico:** God Object, porque la clase concentra todo el flujo y depende directamente de `JdbcTemplate` (viola SRP y DIP). Spaghetti Code, porque el flujo de control es anidado y las abstracciones están mezcladas (viola OCP). Ambos aparecen combinados en un único método de 106 líneas.
+
+#### Refactorización aplicada
+
+Se aplicó un patrón por cada responsabilidad que lo justifica, y `procesarPedido` pasó de 106 a 21 líneas, con `GestorPedidos` como orquestador:
+
+| Capa | Clases | Patrón |
+|---|---|---|
+| Validación | `ValidadorPedido`, `ValidadorStock`, `ValidadorCliente`, `ContextoPedido` | Chain of Responsibility |
+| Descuento | `EstrategiaDescuento`, `DescuentoVip`, `DescuentoFrecuente`, `DescuentoEstandar`, `SelectorEstrategiaDescuento` | Strategy + selector por mapa |
+| Persistencia | `PedidoRepository` | Repository (extracción de clase) |
+| Notificación | `NotificacionPedidoService` | Extracción de clase |
+
+**Decisión 1 — Validación como Chain of Responsibility.** Las validaciones tienen una dependencia real de orden y de corte anticipado. Si `ValidadorStock` rechaza el pedido, `ValidadorCliente` ni siquiera debe consultar la base de datos.
+
+- **Alternativa descartada:** un método `validarTodo()` con una lista de `Predicate<ContextoPedido>`. Evalúa todos los predicados aunque el primero ya haya fallado, y no permite que un validador decida no delegar al siguiente.
+
+**Decisión 2 — Descuento como Strategy y no como otro eslabón de la cadena.** Las reglas de descuento no dependen de un orden entre sí ni necesitan cortar el flujo: siempre se aplica exactamente una regla, determinada por el tipo de cliente.
+
+- **Alternativa descartada:** modelarlo como cadena. Habría obligado a inventar un mecanismo para que solo un eslabón escriba el descuento. El `Map` del `SelectorEstrategiaDescuento` lo resuelve sin condicionales: agregar un tipo de cliente es crear una clase y registrarla en el mapa, sin tocar `GestorPedidos`.
+
+**Comportamiento conservado:** los 10 pedidos de `GestorPedidosTest` se escribieron contra el `GestorPedidos` original y no se modificaron después de refactorizar. Siguen pasando, así que el comportamiento observable es el mismo: rechazo o confirmación, descuento y total. Ver la sección *Comparación antes/después*.
+
+#### Ajustes respecto al código de referencia de la guía
+
+Durante la implementación se encontraron cinco detalles del código de la guía que impedían que funcionara tal como está escrito. Se corrigieron así:
+
+1. **Cliente inexistente.**
+   - **Problema:** `queryForObject("SELECT tipo_cliente FROM clientes WHERE id = ?")` no devuelve `null` cuando no hay fila: lanza `EmptyResultDataAccessException`, y la rama `if (tipoCliente == null)` nunca se ejecutaría.
+   - **Solución:** se usa una subconsulta escalar, `SELECT (SELECT tipo_cliente …)`, que devuelve una fila con `NULL`. Se aplicó igual en el original y en `ValidadorCliente`, para que la prueba de cliente inexistente compare lo mismo.
+2. **`CALL IDENTITY()` en H2 2.x.**
+   - **Problema:** H2 2.x solo conserva `IDENTITY()` en modo de compatibilidad.
+   - **Solución:** se usa `jdbc:h2:mem:pedidosdb;MODE=LEGACY` con un pool de una sola conexión, porque `IDENTITY()` es por sesión.
+3. **Orden de la cadena.**
+   - **Problema:** en la guía, `this.primerValidador = stock.encadenar(cliente)` guarda `cliente` como primer eslabón, porque `encadenar` devuelve el siguiente. Así, `ValidadorStock` nunca se ejecutaría.
+   - **Solución:** aquí `primerValidador = stock` y luego se encadena.
+4. **Pedido sin items.**
+   - **Problema:** el original rechazaba los pedidos sin items; el validador de la guía no lo hacía.
+   - **Solución:** ese caso pasó a `ValidadorStock`, para conservar el comportamiento.
+5. **Precios y transacción.**
+   - **Problema:** la consulta de precios estaba dentro del cálculo, y las escrituras del pedido no tenían transacción.
+   - **Solución:** la consulta se movió a `PedidoRepository.precioUnitario(...)`, para que `GestorPedidos` no tenga SQL. Además, `PedidoRepository.guardar(...)` quedó en `@Transactional`: las cuatro escrituras se aplican todas o ninguna, algo que el original no garantizaba.

@@ -4,6 +4,7 @@ INSERT INTO clientes (id, nombre, tipo_cliente) VALUES (2, 'Bruno Frecuente', 'F
 INSERT INTO clientes (id, nombre, tipo_cliente) VALUES (3, 'Carla Frecuente', 'FRECUENTE');   -- 5 pedidos previos
 INSERT INTO clientes (id, nombre, tipo_cliente) VALUES (4, 'Diego Moroso', 'MOROSO');         -- deuda pendiente
 INSERT INTO clientes (id, nombre, tipo_cliente) VALUES (5, 'Elena Estandar', 'ESTANDAR');
+INSERT INTO clientes (id, nombre, tipo_cliente, nit) VALUES (6, 'Comercial Andina SAS', 'ESTANDAR', '900123456-7'); -- campana CORPORATIVO
 
 INSERT INTO productos (id, nombre, precio) VALUES (1, 'Portatil', 2500000);
 INSERT INTO productos (id, nombre, precio) VALUES (2, 'Mouse', 50000);

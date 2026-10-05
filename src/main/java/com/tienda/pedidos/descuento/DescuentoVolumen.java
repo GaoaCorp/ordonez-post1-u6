@@ -1,0 +1,16 @@
+package com.tienda.pedidos.descuento;
+
+import com.tienda.pedidos.dto.ItemPedido;
+import com.tienda.pedidos.validacion.ContextoPedido;
+import org.springframework.stereotype.Component;
+
+// Campana por volumen: 12 % si el pedido supera 20 unidades en total
+@Component
+public class DescuentoVolumen implements EstrategiaDescuento {
+    @Override
+    public double calcular(ContextoPedido contexto) {
+        int totalUnidades = contexto.getRequest().getItems().stream()
+            .mapToInt(ItemPedido::getCantidad).sum();
+        return totalUnidades > 20 ? 0.12 : 0.0;
+    }
+}

@@ -125,3 +125,63 @@ Mercadeo pidió tres campañas: BLACK_FRIDAY (25 %), CORPORATIVO (10 % con NIT) 
 5. **El motivo de la elección.** La cadena no se eligió porque el problema tuviera forma de cadena, sino porque *"los eslabones ya sabían cómo conectarse entre sí"* y ya había funcionado en la Parte 1.
 
 **Conclusión:** esto es **Golden Hammer**: aplicar la herramienta que acaba de funcionar a un problema con otra forma, sin evaluar si corresponde. Las tres campañas tienen la misma forma que `DescuentoVip` y `DescuentoFrecuente`: calculan un porcentaje a partir de datos del pedido o del cliente, sin depender del orden. El patrón que corresponde, Strategy, ya existía en el proyecto.
+
+#### Corrección: extender el Strategy existente
+
+- `DescuentoBlackFriday`, `DescuentoCorporativo` y `DescuentoVolumen` implementan `EstrategiaDescuento`, igual que los descuentos por tipo de cliente.
+- `CalculadorDescuentoFinal` combina la estrategia por tipo de cliente con el máximo de las campañas: `Math.max(porTipoCliente, max(campañas))`. Es la misma regla de negocio, pero ahora en un solo lugar y sin estado mutable compartido. Si la regla cambiara a sumar, el cambio viviría solo en esa clase.
+- `GestorPedidos` delega el descuento completo a `CalculadorDescuentoFinal`. `ValidadorPedido` vuelve a tener únicamente los dos eslabones que justifican la cadena: `ValidadorStock` y `ValidadorCliente`.
+
+**Decisión — Strategy en vez de más eslabones de cadena.** Las campañas calculan un porcentaje sin depender del orden de evaluación ni necesitar cortar el flujo, que es la propiedad que sí tienen `ValidadorStock` y `ValidadorCliente`.
+
+- **Alternativa descartada:** mantenerlas en la cadena, porque es precisamente la causa del antipatrón diagnosticado.
+
+**Decisión — eliminar, no comentar.** `PromocionBlackFriday`, `PromocionCorporativo`, `PromocionVolumen` y el campo `descuentoCampana` se eliminaron con `git rm`. No quedan ni comentados. Comentar código "por si acaso" es el mecanismo con el que nace un Lava Flow: nadie se atreve a borrarlo después. La referencia histórica queda en el commit de la Parte 2, no en el código activo.
+
+**Verificación:**
+
+- Las pruebas `CampanasDescuentoTest` y `BlackFridayTest` se escribieron contra la versión con Golden Hammer y no se modificaron al corregirla.
+- Siguen pasando, así que los totales son idénticos en ambos diseños.
+
+## Comparación antes/después
+
+Las salidas se tomaron de ejecuciones reales de `mvn test` (JDK 17, Maven 3.9) sobre cuatro puntos del historial. Las pruebas imprimen una línea `[CASO]` por pedido. En las cuatro versiones el resultado fue **BUILD SUCCESS**: 10 pruebas en la Parte 1 y 17 en la Parte 2.
+
+**Parte 1 — `GestorPedidos` original vs. refactorizado.** Los resultados son idénticos.
+
+| Caso | Original (commit `test: …`) | Refactorizado (commit `refactor: reducir …`) |
+|---|---|---|
+| 1. Stock insuficiente | RECHAZADO "Stock insuficiente: producto 4" | RECHAZADO "Stock insuficiente: producto 4" |
+| 2. Cliente inexistente | RECHAZADO "Cliente no registrado" | RECHAZADO "Cliente no registrado" |
+| 3. Moroso a las 10:00 | RECHAZADO "Cliente con deuda pendiente: $300000.0" | RECHAZADO "Cliente con deuda pendiente: $300000.0" |
+| 4. Moroso a las 21:00 | CONFIRMADO total 119.000,00 | CONFIRMADO total 119.000,00 |
+| 5. VIP 2.500.000 (15 %) | CONFIRMADO total 2.528.750,00 | CONFIRMADO total 2.528.750,00 |
+| 6. VIP 800.000 (10 %) | CONFIRMADO total 856.800,00 | CONFIRMADO total 856.800,00 |
+| 7. FRECUENTE 12 pedidos (8 %) | CONFIRMADO total 262.752,00 | CONFIRMADO total 262.752,00 |
+| 8. FRECUENTE 5 pedidos (4 %) | CONFIRMADO total 137.088,00 | CONFIRMADO total 137.088,00 |
+| 9. ESTANDAR | CONFIRMADO total 59.500,00 | CONFIRMADO total 59.500,00 |
+| 10. Persistencia e inventario | CONFIRMADO total 321.300,00 (2 detalles, stock 100 → 97) | CONFIRMADO total 321.300,00 (2 detalles, stock 100 → 97) |
+
+**Parte 2 — campañas con Golden Hammer vs. campañas con Strategy.** Los resultados son idénticos.
+
+| Caso | Eslabones de cadena (commit `feat: agregar 3 campanas …`) | Strategy (commit `refactor: mover las 3 campanas …`) |
+|---|---|---|
+| 11. CORPORATIVO con NIT (10 %) | CONFIRMADO total 107.100,00 | CONFIRMADO total 107.100,00 |
+| 12. VOLUMEN 25 unidades (12 %) | CONFIRMADO total 261.800,00 | CONFIRMADO total 261.800,00 |
+| 13. VIP 5 % vs. VOLUMEN 12 % | CONFIRMADO total 261.800,00 | CONFIRMADO total 261.800,00 |
+| 14. VIP 15 % sin campañas | CONFIRMADO total 2.528.750,00 | CONFIRMADO total 2.528.750,00 |
+| 15. Stock insuficiente con 25 unidades | RECHAZADO "Stock insuficiente: producto 4" | RECHAZADO "Stock insuficiente: producto 4" |
+| 16. BLACK_FRIDAY cliente ESTANDAR (25 %) | CONFIRMADO total 44.625,00 | CONFIRMADO total 44.625,00 |
+| 17. BLACK_FRIDAY 25 % vs. VIP 15 % | CONFIRMADO total 2.231.250,00 | CONFIRMADO total 2.231.250,00 |
+
+En la Parte 2, los casos 1 a 10 de la Parte 1 también se repitieron sin cambios en ambas versiones. Los números de pedido (`pedidoId`) pueden variar entre ejecuciones porque dependen del orden en que JUnit corre las pruebas. Los totales y los motivos de rechazo no varían.
+
+## Herramientas utilizadas
+
+- Java 17, Spring Boot 3.2, Spring JDBC (`JdbcTemplate`), H2 Database
+- JUnit 5, AssertJ, Mockito (`mockStatic` de `LocalTime` para fijar la hora de corte en las pruebas)
+- Apache Maven, Git, GitHub
+
+## Conclusiones
+
+Diagnosticar antes de refactorizar cambió la calidad de la solución. Contar las responsabilidades por líneas y los niveles de anidamiento mostró que `GestorPedidos` necesitaba **dos** patrones distintos y no uno: Chain of Responsibility, porque las validaciones tienen orden y corte anticipado, y Strategy, porque los descuentos solo dependen del tipo de cliente. La Parte 2 dejó la lección más fuerte: el mismo patrón que resolvió bien un problema se convirtió en antipatrón al aplicarlo por costumbre a otro con distinta forma. La pregunta que lo detectó fue concreta: ¿estas clases dependen del orden o necesitan cortar el flujo? Escribir primero las pruebas contra el código original permitió refactorizar dos veces con evidencia de que el comportamiento no cambió. Y borrar en vez de comentar el código descartado evitó convertir la corrección en un Lava Flow.

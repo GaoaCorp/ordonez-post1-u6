@@ -107,3 +107,21 @@ Durante la implementación se encontraron cinco detalles del código de la guía
 5. **Precios y transacción.**
    - **Problema:** la consulta de precios estaba dentro del cálculo, y las escrituras del pedido no tenían transacción.
    - **Solución:** la consulta se movió a `PedidoRepository.precioUnitario(...)`, para que `GestorPedidos` no tenga SQL. Además, `PedidoRepository.guardar(...)` quedó en `@Transactional`: las cuatro escrituras se aplican todas o ninguna, algo que el original no garantizaba.
+
+### Parte 2 — Crecimiento del proyecto
+
+#### Diagnóstico: Golden Hammer
+
+Mercadeo pidió tres campañas: BLACK_FRIDAY (25 %), CORPORATIVO (10 % con NIT) y VOLUMEN (12 % con más de 20 unidades). Se implementaron como tres eslabones más de la cadena de validación: `PromocionBlackFriday`, `PromocionCorporativo` y `PromocionVolumen`, en `validacion/`. Las líneas citadas corresponden al commit *"feat: agregar 3 campanas de descuento como eslabones de la cadena de validacion"*.
+
+**Evidencia:**
+
+1. **No tienen dependencia de orden.** Los tres eslabones solo hacen `contexto.aplicarDescuentoCampana(x)`, y `aplicarDescuentoCampana` se queda con el máximo (`if (valor > this.descuentoCampana)`). El máximo es conmutativo: ejecutar `PromocionVolumen` antes que `PromocionCorporativo` da exactamente el mismo resultado. Todo lo contrario ocurre con `ValidadorStock` → `ValidadorCliente`, donde el orden sí importa, porque no tiene sentido consultar la mora de un pedido sin stock.
+2. **Nunca usan el corte anticipado.** Ninguno llama a `contexto.rechazar(...)`; el comentario de `PromocionBlackFriday` lo admite: *"nunca rechaza -- este eslabon no valida nada"*. La propiedad que justificaba la cadena, decidir si el pedido continúa, no aparece en ninguno de los tres.
+3. **Rompen el contrato de `ValidadorPedido`.** El contrato de esa clase es *"decidir si el pedido continúa o se rechaza"*, pero ahora la extienden clases que solo escriben en un campo compartido.
+   - **Primer síntoma:** hubo que agregarle a `ContextoPedido`, que era el estado de la validación, un campo de cálculo (`descuentoCampana`).
+   - **Segundo síntoma:** `GestorPedidos` tuvo que combinar dos fuentes de descuento a mano, con `Math.max(descuentoTipoCliente, contexto.getDescuentoCampana())`.
+4. **La regla de combinación queda ambigua.** Si mercadeo pidiera sumar dos campañas en vez de tomar la mayor, la cadena no ofrece dónde expresarlo. Habría que cambiar `aplicarDescuentoCampana`, una clase de validación, o depender del orden de los eslabones, que es justamente lo que no debería importar.
+5. **El motivo de la elección.** La cadena no se eligió porque el problema tuviera forma de cadena, sino porque *"los eslabones ya sabían cómo conectarse entre sí"* y ya había funcionado en la Parte 1.
+
+**Conclusión:** esto es **Golden Hammer**: aplicar la herramienta que acaba de funcionar a un problema con otra forma, sin evaluar si corresponde. Las tres campañas tienen la misma forma que `DescuentoVip` y `DescuentoFrecuente`: calculan un porcentaje a partir de datos del pedido o del cliente, sin depender del orden. El patrón que corresponde, Strategy, ya existía en el proyecto.
